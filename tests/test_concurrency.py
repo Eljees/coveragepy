@@ -318,6 +318,9 @@ class ConcurrencyTest(CoverageTest):
 
     @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
     def test_no_warning_when_greenlet_configured(self) -> None:
+        if cant_trace := cant_trace_msg("greenlet", greenlet):
+            pytest.skip(f"Can't test: {cant_trace}")
+
         # Same real switch as above, but this time we did the right thing.
         self.make_file(
             "shuttle2.py",
