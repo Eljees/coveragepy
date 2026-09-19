@@ -312,6 +312,7 @@ class Coverage(TConfigurable):
         self._inited_for_start = False
         # Have we started collecting and not stopped it?
         self._started = False
+        self._greenlet_switch_seen = False
         # Should we write the debug output?
         self._should_write_debug = True
 
@@ -749,21 +750,22 @@ class Coverage(TConfigurable):
         notice a real switch, then immediately remove the hook again.
         """
         self._greenlet_switch_seen = False
-        if "greenlet" in self.config.concurrency:
+        if {"eventlet", "gevent", "greenlet"} & set(self.config.concurrency):
             return
         greenlet = sys.modules.get("greenlet")
         if greenlet is None or not hasattr(greenlet, "settrace"):
             return
 
-        previous_tracefunc = None
+        previous_tracefunc: list[Callable[[str, Any], Any] | None] = [None]
 
         def _probe(event: str, args: Any) -> None:
             self._greenlet_switch_seen = True
-            greenlet.settrace(previous_tracefunc)
-            if previous_tracefunc is not None:
-                previous_tracefunc(event, args)
+            tracefunc = previous_tracefunc[0]
+            greenlet.settrace(tracefunc)
+            if tracefunc is not None:
+                tracefunc(event, args)
 
-        previous_tracefunc = greenlet.settrace(_probe)
+        previous_tracefunc[0] = greenlet.settrace(_probe)
 
     def _warn_if_greenlet_unconfigured(self) -> None:
         """Warn once if `_maybe_probe_for_unconfigured_greenlet` saw a switch."""
