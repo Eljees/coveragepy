@@ -715,6 +715,8 @@ class Coverage(TConfigurable):
 
         apply_patches(self, self.config, self._debug)
 
+        self._maybe_probe_for_unconfigured_greenlet()
+
         self._collector.start()
         self._started = True
         self._instances.append(self)
@@ -727,7 +729,55 @@ class Coverage(TConfigurable):
         if self._started:
             assert self._collector is not None
             self._collector.stop()
+            self._warn_if_greenlet_unconfigured()
         self._started = False
+
+    def _maybe_probe_for_unconfigured_greenlet(self) -> None:
+        """Arm a probe to detect greenlet switches we won't be following.
+
+        Libraries such as SQLAlchemy's async ORM run part of their work
+        through a greenlet switch (see ``greenlet_spawn``). None of our
+        tracers follow those switches unless ``[run] concurrency`` lists
+        "greenlet", so lines executed after such a switch can be silently
+        missing from the report, with no error or indication anything went
+        wrong. We can't fix the tracing retroactively, but we can tell the
+        user why their coverage numbers might be wrong.
+
+        Merely having greenlet installed (or even imported, for unrelated
+        reasons) doesn't mean it's actually switching, so we don't warn just
+        because the module is present: we use greenlet's own trace hook to
+        notice a real switch, then immediately remove the hook again.
+        """
+        self._greenlet_switch_seen = False
+        if "greenlet" in self.config.concurrency:
+            return
+        greenlet = sys.modules.get("greenlet")
+        if greenlet is None or not hasattr(greenlet, "settrace"):
+            return
+
+        previous_tracefunc = None
+
+        def _probe(event: str, args: Any) -> None:
+            self._greenlet_switch_seen = True
+            greenlet.settrace(previous_tracefunc)
+            if previous_tracefunc is not None:
+                previous_tracefunc(event, args)
+
+        previous_tracefunc = greenlet.settrace(_probe)
+
+    def _warn_if_greenlet_unconfigured(self) -> None:
+        """Warn once if `_maybe_probe_for_unconfigured_greenlet` saw a switch."""
+        if not getattr(self, "_greenlet_switch_seen", False):
+            return
+        self._warn(
+            "greenlet is in use but coverage.py isn't configured for it. "
+            "Lines executed after a greenlet switch (for example, inside "
+            "SQLAlchemy's async ORM) can be silently missing from your "
+            "report. Add 'greenlet' to the [run] concurrency setting if "
+            "that applies to you.",
+            slug="greenlet-not-configured",
+            once=True,
+        )
 
     @contextlib.contextmanager
     def collect(self) -> Iterator[None]:

@@ -28,6 +28,7 @@ from coverage.misc import import_local_file
 from coverage.sqldata import SUFFIX_PATTERN
 from tests import testenv
 from tests.coveragetest import CoverageTest
+from tests.helpers import assert_coverage_warnings
 
 # These libraries aren't always available, we'll skip tests if they aren't.
 
@@ -280,6 +281,82 @@ class ConcurrencyTest(CoverageTest):
     def test_greenlet_simple_code(self) -> None:
         code = SIMPLE.format(QLIMIT=self.QLIMIT)
         self.try_some_code(code, "greenlet", greenlet)
+
+    # https://github.com/coveragepy/coveragepy/issues/2245
+    @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
+    def test_warns_about_unconfigured_greenlet(self) -> None:
+        # A real greenlet switch, but *without* telling coverage.py about it
+        # via `concurrency=greenlet` (the mistake real users make when a
+        # library like SQLAlchemy's async ORM uses greenlet under the hood
+        # without them realizing it).
+        self.make_file(
+            "shuttle.py",
+            """\
+            from greenlet import greenlet as make_greenlet, getcurrent
+
+            def worker():
+                main.switch()
+
+            main = getcurrent()
+            g = make_greenlet(worker)
+            g.switch()
+            result = 42
+            """,
+        )
+        with pytest.warns(Warning) as warns:
+            cov = coverage.Coverage()
+            mod = self.start_import_stop(cov, "shuttle")
+        assert mod.result == 42
+        assert_coverage_warnings(
+            warns,
+            "greenlet is in use but coverage.py isn't configured for it. "
+            "Lines executed after a greenlet switch (for example, inside "
+            "SQLAlchemy's async ORM) can be silently missing from your "
+            "report. Add 'greenlet' to the [run] concurrency setting if "
+            "that applies to you. (greenlet-not-configured)",
+        )
+
+    @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
+    def test_no_warning_when_greenlet_configured(self) -> None:
+        # Same real switch as above, but this time we did the right thing.
+        self.make_file(
+            "shuttle2.py",
+            """\
+            from greenlet import greenlet as make_greenlet, getcurrent
+
+            def worker():
+                main.switch()
+
+            main = getcurrent()
+            g = make_greenlet(worker)
+            g.switch()
+            result = 42
+            """,
+        )
+        cov = coverage.Coverage(concurrency=["greenlet"])
+        mod = self.start_import_stop(cov, "shuttle2")
+        assert mod.result == 42
+        assert cov._warnings == []
+
+    @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
+    def test_no_warning_when_greenlet_unused(self) -> None:
+        # greenlet imported (as it would be as a side effect of importing
+        # some unrelated library that happens to depend on it), but never
+        # actually switched to: nothing to warn about.
+        self.make_file(
+            "just_import_greenlet.py",
+            """\
+            import greenlet
+
+            def do_it():
+                return 42
+            """,
+        )
+        cov = coverage.Coverage()
+        mod = self.start_import_stop(cov, "just_import_greenlet")
+        assert mod.do_it() == 42
+        cov.stop()
+        assert cov._warnings == []
 
     # The code in tracer.c that went with this test doesn't seem particular to
     # eventlet. I don't want to remove this test, but I don't know how to
