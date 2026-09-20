@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Iterable
 from types import ModuleType
+from unittest import mock
 
 import pytest
 
@@ -318,10 +319,7 @@ class ConcurrencyTest(CoverageTest):
 
     @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
     def test_preserves_existing_greenlet_trace(self) -> None:
-        events: list[str] = []
-
-        def previous_trace(event: str, _args: object) -> None:
-            events.append(event)
+        previous_trace = mock.Mock()
 
         assert greenlet is not None
         original_trace = greenlet.settrace(previous_trace)
@@ -335,7 +333,7 @@ class ConcurrencyTest(CoverageTest):
                     worker.switch()
                 finally:
                     cov.stop()
-            assert "switch" in events
+            assert previous_trace.called
             assert greenlet.gettrace() is previous_trace
         finally:
             greenlet.settrace(original_trace)
