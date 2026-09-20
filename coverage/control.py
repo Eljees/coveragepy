@@ -776,7 +776,6 @@ class Coverage(TConfigurable):
         probe = functools.partial(self._greenlet_probe, greenlet, previous_tracefunc)
         previous_tracefunc[0] = greenlet.settrace(probe)
 
-
     def _warn_if_greenlet_unconfigured(self) -> None:
         """Warn once if `_maybe_probe_for_unconfigured_greenlet` saw a switch."""
         if not getattr(self, "_greenlet_switch_seen", False):
