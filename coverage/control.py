@@ -9,6 +9,7 @@ import atexit
 import collections
 import contextlib
 import datetime
+import functools
 import os
 import os.path
 import signal
@@ -733,6 +734,20 @@ class Coverage(TConfigurable):
             self._warn_if_greenlet_unconfigured()
         self._started = False
 
+    def _greenlet_probe(
+        self,
+        greenlet: Any,
+        previous_tracefunc: list[Callable[[str, Any], Any] | None],
+        event: str,
+        args: Any,
+    ) -> None:
+        """Record a greenlet switch, restore the old hook, and chain to it."""
+        self._greenlet_switch_seen = True
+        tracefunc = previous_tracefunc[0]
+        greenlet.settrace(tracefunc)
+        if tracefunc is not None:
+            tracefunc(event, args)
+
     def _maybe_probe_for_unconfigured_greenlet(self) -> None:
         """Arm a probe to detect greenlet switches we won't be following.
 
@@ -758,14 +773,9 @@ class Coverage(TConfigurable):
 
         previous_tracefunc: list[Callable[[str, Any], Any] | None] = [None]
 
-        def _probe(event: str, args: Any) -> None:
-            self._greenlet_switch_seen = True
-            tracefunc = previous_tracefunc[0]
-            greenlet.settrace(tracefunc)
-            if tracefunc is not None:
-                tracefunc(event, args)
+        probe = functools.partial(self._greenlet_probe, greenlet, previous_tracefunc)
+        previous_tracefunc[0] = greenlet.settrace(probe)
 
-        previous_tracefunc[0] = greenlet.settrace(_probe)
 
     def _warn_if_greenlet_unconfigured(self) -> None:
         """Warn once if `_maybe_probe_for_unconfigured_greenlet` saw a switch."""

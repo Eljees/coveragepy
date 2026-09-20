@@ -317,6 +317,21 @@ class ConcurrencyTest(CoverageTest):
             "that applies to you. (greenlet-not-configured)",
         )
 
+    def test_greenlet_probe_restores_existing_trace(self) -> None:
+        cov = coverage.Coverage()
+        greenlet_module = mock.Mock()
+        previous_trace = mock.Mock()
+        args = ("from", "to")
+
+        cov._greenlet_probe(greenlet_module, [previous_trace], "switch", args)
+
+        assert cov._greenlet_switch_seen
+        greenlet_module.settrace.assert_called_once_with(previous_trace)
+        previous_trace.assert_called_once_with("switch", args)
+
+        cov._greenlet_probe(greenlet_module, [None], "switch", args)
+        greenlet_module.settrace.assert_called_with(None)
+
     @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
     def test_preserves_existing_greenlet_trace(self) -> None:
         previous_trace = mock.Mock()
