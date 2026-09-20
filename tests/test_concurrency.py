@@ -317,6 +317,30 @@ class ConcurrencyTest(CoverageTest):
         )
 
     @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
+    def test_preserves_existing_greenlet_trace(self) -> None:
+        events: list[str] = []
+
+        def previous_trace(event: str, _args: object) -> None:
+            events.append(event)
+
+        assert greenlet is not None
+        original_trace = greenlet.settrace(previous_trace)
+        try:
+            cov = coverage.Coverage()
+            main = greenlet.getcurrent()
+            worker = greenlet.greenlet(main.switch)
+            with pytest.warns(Warning):
+                cov.start()
+                try:
+                    worker.switch()
+                finally:
+                    cov.stop()
+            assert "switch" in events
+            assert greenlet.gettrace() is previous_trace
+        finally:
+            greenlet.settrace(original_trace)
+
+    @pytest.mark.skipif(greenlet is None, reason="greenlet isn't available")
     def test_no_warning_when_greenlet_configured(self) -> None:
         if cant_trace := cant_trace_msg("greenlet", greenlet):
             pytest.skip(f"Can't test: {cant_trace}")
